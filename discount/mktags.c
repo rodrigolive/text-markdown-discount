@@ -4,6 +4,7 @@
 
 #define __WITHOUT_AMALLOC 1
 #include "cstring.h"
+#include "config.h"
 #include "tags.h"
 
 STRING(struct kw) blocktags;
@@ -65,6 +66,7 @@ main()
     KW("H6");
     KW("LISTING");
     KW("NOBR");
+    KW("FORM");
     KW("UL");
     KW("P");
     KW("OL");

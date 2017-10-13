@@ -18,7 +18,9 @@
 #if defined(HAVE_BASENAME) && defined(HAVE_LIBGEN_H)
 #  include <libgen.h>
 #endif
-#include <unistd.h>
+#if defined(HAVE_ALLOCA_H)
+#  include <alloca.h>
+#endif
 #include <stdarg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -29,10 +31,12 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #include "mkdio.h"
 #include "cstring.h"
 #include "amalloc.h"
+#include "gethopt.h"
 
 char *pgm = "theme";
 char *output = 0;
@@ -45,6 +49,11 @@ struct passwd *me = 0;
 #endif
 struct stat *infop = 0;
 
+#if USE_H1TITLE
+extern char* mkd_h1_title(MMIOT*);
+#endif
+
+extern int notspecial(char *filename);
 
 #define INTAG 0x01
 #define INHEAD 0x02
@@ -315,7 +324,14 @@ static void
 ftitle(MMIOT *doc, FILE* output, int flags, int whence)
 {
     char *h;
-    if ( (h = mkd_doc_title(doc)) == 0 && pagename )
+    h = mkd_doc_title(doc);
+
+#if USE_H1TITLE
+    if ( !h )
+	h = mkd_h1_title(doc);
+#endif
+
+    if ( !h )
 	h = pagename;
 
     if ( h )
@@ -500,60 +516,79 @@ spin(FILE *template, MMIOT *doc, FILE *output)
 } /* spin */
 
 
+struct h_opt opts[] = {
+    { 0, 0, 'c', "flags",  "set/show rendering options" },
+    { 0, 0, 'C', "bitmap", "set/show rendering options numerically" },
+    { 0, 0, 'd', "dir",    "set the document root" },
+    { 0, 0, 'E', 0,        "do all theme expansions everywhere" },
+    { 0, 0, 'f', 0,        "forcibly overwrite existing html files" },
+    { 0, 0, 'o', "file",   "write output to `file`" },
+    { 0, 0, 'p', "title",  "set the page title" },
+    { 0, 0, 'V', 0,        "show version info" },
+} ;
+#define NROPTS (sizeof opts / sizeof opts[0])
+
 main(argc, argv)
 char **argv;
 {
     char *template = "page.theme";
     char *source = "stdin";
     FILE *tmplfile;
-    int opt;
-    mkd_flag_t flags = MKD_TOC;
+    mkd_flag_t flags = THEME_CF|MKD_TOC;
     int force = 0;
     MMIOT *doc;
     struct stat sourceinfo;
+    char *q;
 
-    opterr=1;
+    struct h_opt *opt;
+    struct h_context blob;
+
+    hoptset(&blob, argc, argv);
+    hopterr(&blob, 1);
+    
     pgm = basename(argv[0]);
 
-    while ( (opt=getopt(argc, argv, "EfC:c:d:t:p:o:V")) != EOF ) {
-	switch (opt) {
-	case 'd':   root = optarg;
+    while ( opt = gethopt(&blob, opts, NROPTS) ) {
+	if ( opt == HOPTERR ) {
+	    hoptusage(pgm, opts, NROPTS, "[file]");
+	    exit(1);
+	}
+	switch ( opt->optchar ) {
+	case 'd':   root = hoptarg(&blob);
 		    break;
 	case 'E':   everywhere = 1;
 		    break;
-	case 'p':   pagename = optarg;
+	case 'p':   pagename = hoptarg(&blob);
 		    break;
 	case 'f':   force = 1;
 		    break;
-	case 't':   template = optarg;
+	case 't':   template = hoptarg(&blob);
 		    break;
-	case 'C':   if ( strcmp(optarg, "?") == 0 ) {
-			show_flags(0);
+	case 'C':   if ( strcmp(hoptarg(&blob), "?") == 0 ) {
+			show_flags(0,0);
 			exit(0);
 		    }
 		    else
-			flags = strtol(optarg, 0, 0);
+			flags = strtol(hoptarg(&blob), 0, 0);
 		    break;
-	case 'c':   if ( strcmp(optarg, "?") == 0 ) {
-			show_flags(1);
+	case 'c':   if ( strcmp(hoptarg(&blob), "?") == 0 ) {
+			show_flags(1,0);
 			exit(0);
 		    }
-		    else if ( !set_flag(&flags, optarg) )
-			fprintf(stderr,"%s: unknown option <%s>", pgm, optarg);
+		    else if ( q = set_flag(&flags, hoptarg(&blob)) )
+			fprintf(stderr,"%s: unknown option <%s>", pgm, q);
 		    break;		    
-	case 'o':   output = optarg;
+	case 'o':   output = hoptarg(&blob);
 		    break;
 	case 'V':   printf("theme+discount %s\n", markdown_version);
 		    exit(0);
-	default:    fprintf(stderr, "usage: %s [-V] [-d dir] [-p pagename] [-t template] [-o html] [file]\n", pgm);
-		    exit(1);
 	}
     }
 
     tmplfile = open_template(template);
 
-    argc -= optind;
-    argv += optind;
+    argc -= hoptind(&blob);
+    argv += hoptind(&blob);
 
 
     if ( argc > 0 ) {
@@ -592,11 +627,12 @@ char **argv;
 	    strcat(q, ".html");
 	}
     }
-    if ( output ) {
-	if ( force )
+    if ( output && strcmp(output, "-") ) {
+	if ( force && notspecial(output) )
 	    unlink(output);
-	if ( !freopen(output, "w", stdout) )
+	if ( !freopen(output, "w", stdout) ) {
 	    fail("can't write to %s", output);
+	}
     }
 
     if ( !pagename )
